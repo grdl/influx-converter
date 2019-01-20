@@ -3,13 +3,12 @@ package main
 import (
 	"encoding/json"
 	"log"
-	"net/url"
 	"time"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 
-	"github.com/influxdata/influxdb1-client"
 	"github.com/influxdata/influxdb1-client/models"
+	"github.com/influxdata/influxdb1-client/v2"
 )
 
 var (
@@ -54,8 +53,8 @@ var (
 )
 
 type Converter struct {
-	SourceClient *client.Client
-	TargetClient *client.Client
+	SourceClient client.Client
+	TargetClient client.Client
 }
 
 func main() {
@@ -71,36 +70,24 @@ func main() {
 }
 
 func NewConverter() (*Converter, error) {
-	sourceHost, err := url.Parse(*sourceURL)
+	sourceConf := client.HTTPConfig{
+		Addr:     *sourceURL,
+		Username: *sourceUsername,
+		Password: *sourcePassword,
+	}
+
+	targetConf := client.HTTPConfig{
+		Addr:     *targetURL,
+		Username: *targetUsername,
+		Password: *targetPassword,
+	}
+
+	sourceClient, err := client.NewHTTPClient(sourceConf)
 	if err != nil {
 		return nil, err
 	}
 
-	targetHost, err := url.Parse(*targetURL)
-	if err != nil {
-		return nil, err
-	}
-
-	sourceConf := client.Config{
-		URL:       *sourceHost,
-		Username:  *sourceUsername,
-		Password:  *sourcePassword,
-		Precision: "s", // second precision is enough
-	}
-
-	targetConf := client.Config{
-		URL:       *targetHost,
-		Username:  *targetUsername,
-		Password:  *targetPassword,
-		Precision: "s", // second precision is enough
-	}
-
-	sourceClient, err := client.NewClient(sourceConf)
-	if err != nil {
-		return nil, err
-	}
-
-	targetClient, err := client.NewClient(targetConf)
+	targetClient, err := client.NewHTTPClient(targetConf)
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +145,11 @@ func (c *Converter) Query(database string, query string) (rows models.Row, err e
 	result := models.Row{}
 
 	q := client.Query{
-		Command:  query,
-		Database: database,
+		Command:   query,
+		Database:  database,
+		Chunked:   true,
+		ChunkSize: 10000,
+		Precision: "s",
 	}
 
 	response, err := c.SourceClient.Query(q)
@@ -184,7 +174,7 @@ func (c *Converter) Query(database string, query string) (rows models.Row, err e
 	return result, nil
 }
 
-func (c *Converter) Convert(columns []string, batch [][]interface{}) (points []client.Point, err error) {
+func (c *Converter) Convert(columns []string, batch [][]interface{}) (points []*client.Point, err error) {
 	// Go over each column and convert it into a separate measurement
 	for _, values := range batch {
 		timeValue, err := values[0].(json.Number).Int64()
@@ -201,7 +191,10 @@ func (c *Converter) Convert(columns []string, batch [][]interface{}) (points []c
 				return nil, err
 			}
 
-			point := c.newPoint(columns[i], timestamp, value)
+			point, err := c.newPoint(columns[i], timestamp, value)
+			if err != nil {
+				return nil, err
+			}
 			points = append(points, point)
 		}
 	}
@@ -209,7 +202,7 @@ func (c *Converter) Convert(columns []string, batch [][]interface{}) (points []c
 	return points, nil
 }
 
-func (c *Converter) newPoint(name string, timestamp time.Time, value float64) (point client.Point) {
+func (c *Converter) newPoint(name string, timestamp time.Time, value float64) (point *client.Point, err error) {
 	tags := map[string]string{
 		"__name__": name,
 	}
@@ -218,25 +211,23 @@ func (c *Converter) newPoint(name string, timestamp time.Time, value float64) (p
 		tags[k] = v
 	}
 
-	point = client.Point{
-		Measurement: name,
-		Tags:        tags,
-		Fields: map[string]interface{}{
-			"value": value,
-		},
-		Time:      timestamp,
-		Precision: "s",
+	fields := map[string]interface{}{
+		"value": value,
 	}
 
-	return point
+	point, err = client.NewPoint(name, tags, fields, timestamp)
+
+	return point, nil
 }
 
-func (c *Converter) WritePoints(points []client.Point) error {
-	batchPoints := client.BatchPoints{
-		Points:   points,
-		Database: *targetDB,
-	}
+func (c *Converter) WritePoints(points []*client.Point) (err error) {
+	batchPoints, err := client.NewBatchPoints(client.BatchPointsConfig{
+		Database:  *targetDB,
+		Precision: "s",
+	})
 
-	_, err := c.TargetClient.Write(batchPoints)
+	batchPoints.AddPoints(points)
+
+	err = c.TargetClient.Write(batchPoints)
 	return err
 }
