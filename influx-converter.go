@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	batchSize      = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("10000").Int()
+	batchSize      = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("1000").Int()
 	sourceUsername = kingpin.Flag("source-username", "Username for the source InfluxDB.").Required().String()
 	sourcePassword = kingpin.Flag("source-password", "Password for the source InfluxDB.").Required().String()
 	targetUsername = kingpin.Flag("target-username", "Username for the target InfluxDB. If missing, source-username is used.").Default(*sourceUsername).String()
@@ -40,16 +40,16 @@ var (
 	// target -> nest_target_temp
 	// temperature -> nest_current_temp
 
-	insideQuery      = "select has_leaf as nest_leaf, humidity as nest_humidity, is_heating as nest_heating, target as nest_target_temp, temperature as nest_current_temp from inside where time > now() -10h"
-	insideCountQuery = "select count(*) from inside where time > now() -10h"
+	insideQuery      = "select has_leaf as nest_leaf, humidity as nest_humidity, is_heating as nest_heating, target as nest_target_temp, temperature as nest_current_temp from inside"
+	insideCountQuery = "select count(*) from inside"
 
 	// outside:
 	// humidity -> nest_weather_humidity
 	// pressure -> nest_weather_pressure
 	// temperature -> nest_weather_temp
 
-	outsideQuery      = "select humidity as nest_weather_humidity, pressure as nest_weather_pressure, temperature as nest_weather_temp from outside where time > now() -10h"
-	outsideCountQuery = "select count(*) from outside where time > now() -10h"
+	outsideQuery      = "select humidity as nest_weather_humidity, pressure as nest_weather_pressure, temperature as nest_weather_temp from outside"
+	outsideCountQuery = "select count(*) from outside"
 )
 
 type Converter struct {
@@ -147,8 +147,6 @@ func (c *Converter) Query(database string, query string) (rows models.Row, err e
 	q := client.Query{
 		Command:   query,
 		Database:  database,
-		Chunked:   true,
-		ChunkSize: 10000,
 		Precision: "s",
 	}
 
