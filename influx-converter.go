@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	batchSize      = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("100").Int()
+	batchSize      = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("10000").Int()
 	sourceUsername = kingpin.Flag("source-username", "Username for the source InfluxDB.").Required().String()
 	sourcePassword = kingpin.Flag("source-password", "Password for the source InfluxDB.").Required().String()
 	targetUsername = kingpin.Flag("target-username", "Username for the target InfluxDB. If missing, source-username is used.").Default(*sourceUsername).String()
