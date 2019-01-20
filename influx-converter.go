@@ -2,25 +2,26 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/url"
 	"time"
-
-	"github.com/influxdata/influxdb1-client/models"
-
-	"log"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/influxdata/influxdb1-client"
+	"github.com/influxdata/influxdb1-client/models"
 )
 
 var (
-	username  = kingpin.Flag("username", "InfluxDB username").Required().String()
-	password  = kingpin.Flag("password", "InfluxDB password").Required().String()
-	influxURL = kingpin.Flag("url", "InfluxDB URL").Default("https://influxdb.hq.grdl.pl").String()
-	batchSize = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("100").Int()
-	sourceDB  = kingpin.Flag("source-db", "Name of the source database").Default("nestats").String()
-	targetDB  = kingpin.Flag("target-db", "Name of the target database").Default("prometheus").String()
+	batchSize      = kingpin.Flag("batch-size", "Number of metrics inserted at a time").Default("100").Int()
+	sourceUsername = kingpin.Flag("source-username", "Username for the source InfluxDB.").Required().String()
+	sourcePassword = kingpin.Flag("source-password", "Password for the source InfluxDB.").Required().String()
+	targetUsername = kingpin.Flag("target-username", "Username for the target InfluxDB. If missing, source-username is used.").Default(*sourceUsername).String()
+	targetPassword = kingpin.Flag("target-password", "Password for the target InfluxDB. If missing, source-password is used.").Default(*sourcePassword).String()
+	sourceURL      = kingpin.Flag("source-url", "URL of the source InfluxDB.").Default("https://influxdb.hq.grdl.pl").String()
+	targetURL      = kingpin.Flag("target-url", "URL of the target InfluxDB. If missing, source-url is used.").Default(*sourceURL).String()
+	sourceDB       = kingpin.Flag("source-db", "Name of the source database.").Default("nestats").String()
+	targetDB       = kingpin.Flag("target-db", "Name of the target database.").Default("prometheus").String()
 )
 
 var (
@@ -53,7 +54,8 @@ var (
 )
 
 type Converter struct {
-	Client *client.Client
+	SourceClient *client.Client
+	TargetClient *client.Client
 }
 
 func main() {
@@ -69,25 +71,43 @@ func main() {
 }
 
 func NewConverter() (*Converter, error) {
-	host, err := url.Parse(*influxURL)
+	sourceHost, err := url.Parse(*sourceURL)
 	if err != nil {
 		return nil, err
 	}
 
-	conf := client.Config{
-		URL:       *host,
-		Username:  *username,
-		Password:  *password,
+	targetHost, err := url.Parse(*targetURL)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceConf := client.Config{
+		URL:       *sourceHost,
+		Username:  *sourceUsername,
+		Password:  *sourcePassword,
 		Precision: "s", // second precision is enough
 	}
 
-	con, err := client.NewClient(conf)
+	targetConf := client.Config{
+		URL:       *targetHost,
+		Username:  *targetUsername,
+		Password:  *targetPassword,
+		Precision: "s", // second precision is enough
+	}
+
+	sourceClient, err := client.NewClient(sourceConf)
+	if err != nil {
+		return nil, err
+	}
+
+	targetClient, err := client.NewClient(targetConf)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Converter{
-		Client: con,
+		SourceClient: sourceClient,
+		TargetClient: targetClient,
 	}, nil
 }
 
@@ -142,7 +162,7 @@ func (c *Converter) Query(database string, query string) (rows models.Row, err e
 		Database: database,
 	}
 
-	response, err := c.Client.Query(q)
+	response, err := c.SourceClient.Query(q)
 
 	if err != nil {
 		return result, err
@@ -217,6 +237,6 @@ func (c *Converter) WritePoints(points []client.Point) error {
 		Database: *targetDB,
 	}
 
-	_, err := c.Client.Write(batchPoints)
+	_, err := c.TargetClient.Write(batchPoints)
 	return err
 }
